@@ -75,7 +75,8 @@ module Opaz
         resources_folder = platform_build_folder + "/wrapper.vst" + (platform == :osx ? "/Contents/Resources" : "")
 
         # copy platform template
-        cp_r template(platform), platform_build_folder
+        # cp_r template(platform), platform_build_folder
+        cp_r template(platform), build_folder(plugin_folder) 
 
         # create ini file
         ini_file = resources_folder + "/" + (platform == :osx ? "wrapper.jnilib.ini" : "wrapper.ini")
