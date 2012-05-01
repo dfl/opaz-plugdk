@@ -1,9 +1,8 @@
 module Midi
   extend self
 
-  A = 432.0
-  def note_to_freq( note )
-    A * 2.0**((note-69)/12.0)
+  def note_to_freq( note, a = 432.0 ) # equal tempered
+    a * 2.0**((note-69)/12.0)
   end
 
   def process(events)
@@ -21,6 +20,11 @@ module Midi
         yield :all_notes_off if [0x7e, 0x7b].include?( midiData[1] )
       end
     end
+  end
+
+  KRYSTAL = [ 256.0, 272.0, 288.0, 305.0, 320.0, 1024.0/3, 360.0, 384.0, 405.0, 432.0, 455.1, 480.0 ]
+  def krystal_freq( note )
+    KRYSTAL[ note % 12 ] * 2.0**( note / 12 - 5 )
   end
 
 end 

@@ -81,7 +81,6 @@ class SuperSynth < OpazPlug
       outBuffer.fill(0,0...sampleFrames)
     else
       sampleFrames.times do |i|
-        # TODO @delta
         outBuffer[i] = 0.99 * gain * @amp * @osc.tick()
       end
     end
@@ -101,7 +100,7 @@ class SuperSynth < OpazPlug
         else
           log "note on"
           @silence = false
-          @osc.freq = Midi.note_to_freq( note )
+          @osc.freq = Midi.krystal_freq( note )  # .note_to_freq(note)
           @amp      = velocity / 127.0
           @delta    = delta # TODO ???
         end
@@ -123,12 +122,20 @@ class PolyphonicSynth
     end
     
     def tick
-      output = @synth.tick
-      # stop if @synth.silent?  # PERF TODO: move this to a callback in the synth? and/or just return 0 in synth
-      output
+      @synth.tick
     end
 
-    def play( note, velocity, delta )
+    def ticks samples
+      if @delta > 0
+        @delta -= samples if @delta >= samples
+        output = Dsp.zeros(@delta)
+        zeros(@delta) + (@delta+1..samples).map{ @synth.tick }
+      else
+        (1..samples).map{ @synth.tick }
+      end
+    end
+
+    def play( note, velocity, delta=0 )
       @note, @velocity, @delta = note,velocity,delta
       @synth.freq = Midi.note_to_freq( note )
       @synth.trigger(:attack)
@@ -138,8 +145,8 @@ class PolyphonicSynth
     def release
       @synth.trigger(:release)
     end
-
-    def stop
+      
+    def stop  # TODO: call this when synth release envelope stops
       @voicer.free_voice self
     end
 
@@ -181,7 +188,7 @@ class PolyphonicSynth
     require 'matrix'
     voices = active_voices
     zeros  = Vector[ *Dsp.zeros(samples) ]
-    output = voices.inject( zeros ){ |sum,voice| sum + voice.tick }
+    output = voices.inject( zeros ){ |sum,voice| sum + voice.ticks(samples) }
     ( @voice_scaling[ voices.count ] * output ).to_a
   end
 
