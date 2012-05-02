@@ -1,7 +1,7 @@
 module Midi
   extend self
-
-  def note_to_freq( note, a = 432.0 ) # equal tempered
+  A = 432.0
+  def note_to_freq( note, a = A ) # equal tempered
     a * 2.0**((note-69)/12.0)
   end
 
