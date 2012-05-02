@@ -1,6 +1,12 @@
 # see also /Users/dfl/projects/dsptest/FastMath.h
+require 'matrix'
 
 module Dsp
+  TWO_PI    = 2.0*Math::PI
+  SQRT2_2   = Math.sqrt(2) / 2
+  # INV_SQRT2 = 1.0 / Math.sqrt(2)
+
+
   extend self
   
   def noise
@@ -33,9 +39,21 @@ end
 
 
 module ArrayExtensions
+  def full_of(val,num)
+    [].fill(val,0...num)
+  end
+
   def zeros num
-    [].fill(0,0...num) 
+    full_of(0,num)
   end
 end
 
-Array.send :include, ArrayExtensions
+Array.send :extend, ArrayExtensions
+
+# module VectorExtensions
+#   def full_of(val,num)
+#     Vector[ *Array.full_of(val,num) ]
+#   end
+# end
+# 
+# Vector.send :extend, VectorExtensions

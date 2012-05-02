@@ -10,13 +10,18 @@ class Generator
   def ticks samples
     (1..samples).map{ tick }
   end
+  
+  def initialize srate=44.1e3
+    @inv_srate = 1.0 / srate
+    self
+  end  
 end
 
 class Oscillator < Generator
   attr_accessor :freq  
   
   def initialize( srate=44.1e3 ) # srate== OpazPlug.sampleRate )
-    @inv_srate = 1.0 / srate
+    super
     self.freq = Midi::A
     self
   end
@@ -93,26 +98,25 @@ class Pulse < PhasorOscillator
 end
 
 class RpmSaw < PhasorOscillator
-  TWO_PI = 2.0*Math::PI
-
   def initialize( srate=44.1e3, phase=0 )
     super
     @beta = 1.0
     @state = @last_out = 0
   end
+  
   def beta= arg
     @beta = Dsp.clamp(arg, 0.0, 2.0)
   end
   
   def tick
     @state = 0.5*(@state + @last_out) # one-pole averager
-    @last_out = Math.sin( TWO_PI * tock + @beta * @state )
+    @last_out = Math.sin( Dsp::WO_PI * tock + @beta * @state )
   end
 end
 
 class RpmSquare < RpmSaw
   def tick
     @state = 0.5*(@state + @last_out*@last_out) # one-pole averager, squared
-    @last_out = Math.sin( TWO_PI * tock - @beta * @state )
+    @last_out = Math.sin( Dsp::TWO_PI * tock - @beta * @state )
   end
 end
