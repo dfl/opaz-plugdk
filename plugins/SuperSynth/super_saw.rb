@@ -1,7 +1,7 @@
 require './phasor'
 #require './dsp'
 
-class Processor
+class Processor < AudioDSP
   def tick(s)
     raise "not implemented!"
   end
@@ -10,24 +10,20 @@ class Processor
     inputs.map{|s| tick(s) }
   end
   
-  def initialize srate=44.1e3
-    @srate = srate
-    @inv_srate = 1.0 / @srate
-    self
-  end  
 end
 
 class Biquad < Processor
-  def initialize( srate=44.1e3, a=[1.0,0,0], b=[1.0,0,0], norm=false )
+  def initialize( a=[1.0,0,0], b=[1.0,0,0], norm=false )
     update( Vector[*a], Vector[*b] )
     normalize if norm
     clear
-    super srate
+    self
   end
 
   def clear
-    @input = @output = [0,0,0]
-    @_a = @_b = @a = @b
+    @input  = [0,0,0]
+    @output = [0,0,0]
+    stop_interpolation
   end
 
   def update a, b
@@ -36,14 +32,18 @@ class Biquad < Processor
     interpolate if interpolating?
   end
   
-  def normalize
+  def normalize  # what about b0 (gain)
     inv_a0 = 1.0/a0
     @a *= inv_a0
     @b *= inv_a0
   end
 
+  def stop_interpolation
+    @_a = @_b = nil
+  end
+
   def interpolate # TODO: interpolate over VST sample frame ?
-    @interp_period = (@srate * 1e-3).floor  # 1ms
+    @interp_period = (@@srate * 1e-3).floor  # 1ms
     t = 1.0 / @interp_period
     @delta_a = (@a - @_a) * t
     @delta_b = (@b - @_b) * t
@@ -55,33 +55,63 @@ class Biquad < Processor
   end
   
   def tick input
-    if interpolating?
+    if interpolating?  # process with interpolated state
       @_a += @delta_a
       @_b += @delta_b
       process( input, @_a, @_b ).tap do
-        @_a = _b = nil if (@interp_ticks += 1) >= @interp_period
+        stop_interpolation if (@interp_ticks += 1) >= @interp_period
       end
     else
-      process( input, @a, @b )
+      process( input )
     end
   end
   
-  def process input, a, b
-    @input[0] = a[0] * input
-    output  = b[0] * @input[0]  + b[1] * @input[1] + b[2] * @input[2]
-    output -= a[2] * @output[2] + a[1] * @output[1]
+  def process input, a=@a, b=@b  # default to normal state
+    output = a[0]*input + a[1]*@input[1] + a[2]*@input[2]
+    output -= b[1]*@output[1] + b[2]*@output[2]
     @input[2]  = @input[1]
-    @input[1]  = @input[0]
+    @input[1]  = input
     @output[2] = @output[1]
-    @output[1] = @output[0]
+    @output[1] = output
   end
 end
 
+class ButterHpf < Biquad
+  def initialize f
+    self.freq = f # triggers recalc
+    clear
+    self
+  end
+
+  def freq= arg
+    @w = arg * @@inv_srate # (0..0.5)
+    recalc
+  end
+
+  def recalc
+    # from /Developer/Examples/CoreAudio/AudioUnits/AUPinkNoise/Utility/Biquad.cpp 
+  	k = Math.tan( Math::PI * @w )
+  	kk = k*k;	
+  	g = Dsp::SQRT2*k + kk
+  	d_inv = 1.0 / (1 + g);
+
+    a0 = d_inv
+    a1 = -2 * d_inv
+    a2 = d_inv
+    b0 = 1.0 # gain
+    b1 = 2*kk-1 * d_inv
+    b2 = (1 - g) * d_inv
+    update( Vector[a0, a1, a2], Vector[b0, b1, b2] )
+  end
+end
+
+
 class Hpf < Biquad
-  def initialize( srate, f, qq=Dsp::SQRT2_2 )
-    @inv_q = 1.0 / qq
-    freq = f # triggers recalc
-    super srate
+  def initialize( f, q=nil )
+    @inv_q = q ? 1.0 / q : Math.sqrt(2)  # default to butterworth
+    self.freq = f # triggers recalc
+    clear
+    self
   end
   
   def q= arg
@@ -90,7 +120,7 @@ class Hpf < Biquad
   end
   
   def freq= arg
-    @w = arg * Dsp::TWO_PI * @inv_srate
+    @w = arg * Dsp::TWO_PI * @@inv_srate
     recalc
   end
 
@@ -100,6 +130,7 @@ class Hpf < Biquad
     ocw = 1+cw
     b0 = b2 = 0.5*ocw
     b1 = -ocw
+
     a0 = 1 + alpha
     a1 = -2.0*cw
     a2 = 1 - alpha
@@ -109,22 +140,31 @@ class Hpf < Biquad
 end
 
 class SuperSaw < Oscillator
-  def initialize srate=44.1e3, num=7
-    @master = Phasor.new(srate)
-    @phasors = (1..num-1).map{ Phasor.new(srate) }
+  attr_accessor :phat
+
+  def initialize freq = DEFAULT_FREQ, spread=0.5, num=7
+    @master = Phasor.new
+    @phasors = (1..num-1).map{ Phasor.new }
+    @phat = spread
     setup_tables
-    @phat = 12/127.0  # default knob
-    @hpf = Hpf.new( srate, @master.freq )
-    super srate
+    @hpf = ButterHpf.new( @master.freq )
+    randomize_phase
+    self.freq = freq
+    self
   end
 
+  def randomize_phase
+    @phasors.each{|p| p.phase = Dsp.random }
+  end
+  
   def clear
     @hpf.clear
+    randomize_phase
   end
   
   def freq= f
     @hpf.freq = @master.freq = @freq = f
-    @phasors.each_with_index{ |p,i| p.freq = f + @@detune[@phat] * @@offsets[i] }
+    @phasors.each_with_index{ |p,i| p.freq = (1 + @@detune[@phat] * @@offsets[i]) * f; puts "#{i+1}: #{p.freq}" }
   end
 
   def tick
@@ -133,9 +173,9 @@ class SuperSaw < Oscillator
     @hpf.tick( osc )
   end
   
-  def ticks samples 
+  def ticks samples
     osc =  @@center[ @phat ] * Vector[*@master.ticks(samples)]
-    osc +=   @@side[ @phat ] * @phasors.inject( osc ){|sum,p| sum + Vector[*p.ticks(samples)] }
+    osc =   @@side[ @phat ] * @phasors.inject( osc ){|sum,p| sum + Vector[*p.ticks(samples)] }
     @hpf.ticks( osc.to_a )
   end
   
@@ -143,9 +183,9 @@ class SuperSaw < Oscillator
 
   def setup_tables
     @@offsets ||= [ -0.11002313, -0.06288439, -0.01952356, 0.01991221, 0.06216538, 0.10745242 ]
-    @@detune  ||= Dsp.lookup_table{|x| calc_detune(x) }
-    @@side    ||= Dsp.lookup_table{|x| calc_side(x)   }
-    @@center  ||= Dsp.lookup_table{|x| calc_center(x) }
+    @@detune  ||= Dsp::LookupTable.new{|x| calc_detune(x) }
+    @@side    ||= Dsp::LookupTable.new{|x| calc_side(x)   }
+    @@center  ||= Dsp::LookupTable.new{|x| calc_center(x) }
   end
   
   def calc_detune x
@@ -161,21 +201,3 @@ class SuperSaw < Oscillator
   end
 
 end
-
-
-# require 'wavefile'
-# s = SuperSaw.new
-# cycle = s.ticks( 10000 )
-# 
-# include WaveFile
-# 
-# format = Format.new(:mono, 16, 44100)
-# writer = Writer.new("super.wav", format)
-# 
-# # Write a 1 second long 440Hz square wave
-# buffer = Buffer.new(cycle, format)
-# 220.times do
-#   writer.write(buffer)
-# end
-# 
-# writer.close()

@@ -2,7 +2,26 @@
 require './midi'
 require './dsp'
 
-class Generator
+class AudioDSP
+  @@srate     = 44.1e3
+  @@inv_srate = 1.0 / @@srate
+  
+  def self.sampleRate
+    @@srate
+  end
+
+  def self.sampleRate= srate
+    @@srate = srate
+    @@inv_srate = 1.0 / @@srate
+  end
+  
+  def sampleRate
+    @@srate
+  end
+
+end
+
+class Generator < AudioDSP
   def tick
     raise "not implemented!"
   end
@@ -10,22 +29,16 @@ class Generator
   def ticks samples
     (1..samples).map{ tick }
   end
-  
-  def initialize srate=44.1e3
-    @inv_srate = 1.0 / srate
-    self
-  end  
 end
 
 class Oscillator < Generator
   attr_accessor :freq  
+  DEFAULT_FREQ = Midi::A / 2
   
-  def initialize( srate=44.1e3 ) # srate== OpazPlug.sampleRate )
-    super
-    self.freq = Midi::A
+  def initialize freq=DEFAULT_FREQ
+    self.freq = freq
     self
   end
-  
 end
   
 class Phasor < Oscillator
@@ -33,9 +46,9 @@ class Phasor < Oscillator
 
   OFFSET = { true => 0.0, false => 1.0 }  # branchless trick from Urs Heckmann
 
-  def initialize( srate=44.1e3, phase = Dsp.noise )
+  def initialize( freq = DEFAULT_FREQ, phase = Dsp.noise )
     @phase = phase
-    super srate
+    super freq
   end
   
   def tick
@@ -45,13 +58,13 @@ class Phasor < Oscillator
 
   def freq= arg
     @freq = arg
-    @inc  = @freq * @inv_srate
+    @inc  = @freq * @@inv_srate
   end
 end
 
 
 class PhasorOscillator < Oscillator
-  def initialize( srate=44.1e3, phase=0 )
+  def initialize( freq = DEFAULT_FREQ, phase=0 )
     @phasor = Phasor.new( srate, phase )
     super srate
   end
@@ -84,10 +97,11 @@ end
 class Pulse < PhasorOscillator
   FACTOR = { true => 1.0, false => -1.0 }
 
-  def initialize( srate=44.1e3, phase=0 )
-    super
+  def initialize( freq=DEFAULT_FREQ, phase=0 )
     @duty = 0.5
+    super
   end
+
   def duty= arg
     @duty = Dsp.clamp(arg, 0.0, 1.0)
   end
@@ -98,10 +112,10 @@ class Pulse < PhasorOscillator
 end
 
 class RpmSaw < PhasorOscillator
-  def initialize( srate=44.1e3, phase=0 )
-    super
+  def initialize( freq=MIDI::A, phase=0 )
     @beta = 1.0
     @state = @last_out = 0
+    super
   end
   
   def beta= arg
